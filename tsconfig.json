@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "lib": ["esnext", "dom"],
+    "module": "CommonJS",
+    "outDir": "dist",
+    "declaration": true,
+    "downlevelIteration": true,
+    "noImplicitReturns": true,
+    "strictNullChecks": true,
+    "noImplicitAny": false,
+    "target": "ES5"
+  },
+  "compileOnSave": true,
+  "include": ["src"]
+}
