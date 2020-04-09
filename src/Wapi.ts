@@ -170,6 +170,8 @@ export default () => {
           return false
         }
       },
+
+      newMessageListener: (fn) => window.Store.Msg.on('add', fn),
     }
   }
 }

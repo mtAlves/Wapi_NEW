@@ -1,3 +1,3 @@
 import injectWAPI from './Wapi'
 
-export default injectWAPI
+export default injectWAPI()

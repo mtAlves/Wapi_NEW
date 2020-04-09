@@ -36,6 +36,7 @@ declare global {
         contactId: string,
         mediaConfig: MediaConfig
       ) => Promise<boolean>
+      newMessageListener: (fn: (message: Message) => any) => void
     }
   }
 }
