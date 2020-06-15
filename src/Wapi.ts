@@ -1,11 +1,15 @@
 import injectStore from './Store'
 import base64ToFile from './utils/base64_to_file'
+import convertToUnixTimestmap from './utils/unix_timestamp'
 
 export default () => {
   if (!window.Store) injectStore()
 
   if (!window.WAPI) {
     window.WAPI = {
+      createGroup: (groupName, contactsId) =>
+        window.Store.WapQuery.createGroup(groupName, contactsId),
+
       getAllChats: function () {
         const chats = window.Store.Chat.models
         if (chats.length)
@@ -22,14 +26,48 @@ export default () => {
       getAllChatsWithUnread: () =>
         window.WAPI.getAllChats().filter((chat) => chat.unreadCount > 0),
 
+      getAllMessages: (includeMe) =>
+        includeMe
+          ? window.Store.Msg.models
+          : window.Store.Msg.models.filter(
+              (msg) => msg.from.user !== 'status' && !msg.id.fromMe
+            ),
+
+      getBroadcasts: () =>
+        window.Store.Contact.models.filter((contact) => contact.isBroadcast),
+
+      getChatById: (chatId) =>
+        window.WAPI.getAllChats().find(
+          (chat) => chat.id._serialized === chatId
+        ),
+
       getChatByName: (chatName) =>
         window.WAPI.getAllChats().find(
           (chat) => chat.formattedTitle === chatName || chat.name === chatName
         ),
 
-      getChatById: (chatId) =>
-        window.WAPI.getAllChats().find(
-          (chat) => chat.id._serialized === chatId
+      getCommonGroups: (contactId) =>
+        window.Store.GroupMetadata.models.filter((group) =>
+          group.participants.models.find(
+            (participant) => participant.id._serialized === contactId
+          )
+        ),
+
+      getContactById: (contactId: string) =>
+        window.Store.Contact.models.find(
+          (contact) => contact.id._serialized === contactId
+        ),
+
+      getContactByName: (contactName: string) =>
+        window.Store.Contact.models.find(
+          (contact) =>
+            contact.name === contactName ||
+            contact.formattedName === contactName
+        ),
+
+      getContactsBlocked: () =>
+        window.Store.Contact.models.filter(
+          (contact) => contact.isContactBlocked
         ),
 
       getGroupChats: () =>
@@ -40,11 +78,39 @@ export default () => {
           .find((group) => group.id._serialized === groupId)
           .participants.map((group) => group.id._serialized),
 
-      getCommonGroups: (contactId) =>
-        window.Store.GroupMetadata.models.filter((group) =>
-          group.participants.models.find(
-            (participant) => participant.id._serialized === contactId
-          )
+      getMe: () => window.Store.Conn.me,
+
+      getMessageById: (messageId) =>
+        window.Store.Msg.models.find(
+          (message) => message.id._serialized === messageId
+        ),
+
+      getMessagesFromContact: (contactId) =>
+        window.Store.Msg.models.filter(
+          (msg) =>
+            msg.from.user !== 'status' && msg.from._serialized === contactId
+        ),
+
+      getMessagesWhereTimestampGreaterThan: (timestamp, includeMe) => {
+        const unixTimestamp = convertToUnixTimestmap(timestamp)
+        return window.WAPI.getAllMessages(includeMe).filter(
+          (msg) => msg.t > unixTimestamp
+        )
+      },
+
+      getMessagesWhereTimestampLessThan: (timestamp, includeMe) => {
+        const unixTimestamp = convertToUnixTimestmap(timestamp)
+        return window.WAPI.getAllMessages(includeMe).filter(
+          (msg) => msg.t < unixTimestamp
+        )
+      },
+
+      getMyContacts: () =>
+        window.Store.Contact.models.filter((contact) => contact.isMyContact),
+
+      getProfilePicFromId: (contactId) =>
+        window.Store.ProfilePicThumb.models.find(
+          (profile) => profile.id._serialized === contactId
         ),
 
       getUnreadMessages: () =>
@@ -52,46 +118,10 @@ export default () => {
           (msg) => msg.isNewMsg && !msg.isSentByMe && msg.from.user !== 'status'
         ),
 
-      getMessage: (messageId) =>
-        window.Store.Msg.models.find(
-          (message) => message.id._serialized === messageId
-        ),
-
-      getProfilePicFromId: (contactId) =>
-        window.Store.ProfilePicThumb.models.find(
-          (profile) => profile.id._serialized === contactId
-        ),
-
-      getMe: () => window.Store.Conn.me,
-
-      getContactByName: (contactName: string) =>
-        window.Store.Contact.models.find(
-          (contact) =>
-            contact.name === contactName ||
-            contact.formattedName === contactName
-        ),
-
-      getContactById: (contactId: string) =>
-        window.Store.Contact.models.find(
-          (contact) => contact.id._serialized === contactId
-        ),
-
-      getMyContacts: () =>
-        window.Store.Contact.models.filter((contact) => contact.isMyContact),
-
-      getContactsBlocked: () =>
-        window.Store.Contact.models.filter(
-          (contact) => contact.isContactBlocked
-        ),
-
-      getBroadcasts: () =>
-        window.Store.Contact.models.filter((contact) => contact.isBroadcast),
-
-      createGroup: (groupName, contactsId) =>
-        window.Store.WapQuery.createGroup(groupName, contactsId),
+      newMessageListener: (fn) => window.Store.Msg.on('add', fn),
 
       replyMessage: (messageId, text) => {
-        const message = window.WAPI.getMessage(messageId)
+        const message = window.WAPI.getMessageById(messageId)
         if (message) {
           const chat = window.WAPI.getChatById(message.chat.id._serialized)
           if (chat) {
@@ -109,14 +139,26 @@ export default () => {
         return false
       },
 
-      sendVCardMessage: (sendToContactId, vCardContactId) => {
-        const chat = window.WAPI.getChatById(sendToContactId)
-        const contact = window.WAPI.getContactById(vCardContactId)
+      sendMediaMessage: async (contactId, mediaConfig) => {
+        const chat = window.WAPI.getChatById(contactId)
+        if (!chat) return false
 
-        if (!chat || !contact) return false
+        try {
+          const file = base64ToFile(mediaConfig.base64Media, {
+            name: mediaConfig.fileName,
+            type: mediaConfig.mimeType,
+          })
+          const mediaCollection = new window.Store.MediaCollection(chat)
 
-        chat.sendContact(contact)
-        return true
+          await mediaCollection.processAttachments([{ file }], 1, chat, 1)
+          const media = mediaCollection.models[0]
+          media.sendToChat(chat, { caption: mediaConfig.caption })
+
+          return true
+        } catch (err) {
+          console.log(err)
+          return false
+        }
       },
 
       sendTextMessage: (contactId, text) => {
@@ -149,29 +191,51 @@ export default () => {
         return false
       },
 
-      sendMediaMessage: async (contactId, mediaConfig) => {
-        const chat = window.WAPI.getChatById(contactId)
-        if (!chat) return false
+      sendVCardMessage: (sendToContactId, vCardContactId) => {
+        const chat = window.WAPI.getChatById(sendToContactId)
+        const contact = window.WAPI.getContactById(vCardContactId)
 
-        try {
-          const file = base64ToFile(mediaConfig.base64Media, {
-            name: mediaConfig.fileName,
-            type: mediaConfig.mimeType,
-          })
-          const mediaCollection = new window.Store.MediaCollection(chat)
+        if (!chat || !contact) return false
 
-          await mediaCollection.processAttachments([{ file }], 1, chat, 1)
-          const media = mediaCollection.models[0]
-          media.sendToChat(chat, { caption: mediaConfig.caption })
+        chat.sendContact(contact)
+        return true
+      },
 
-          return true
-        } catch (err) {
-          console.log(err)
-          return false
+      serializeContact: (contactId) => {
+        const contact = window.WAPI.getContactById(contactId)
+        return {
+          name: contact?.pushname || contact?.displayName || null,
+          isMyContact: contact?.isMyContact || false,
+          isGroup: contact?.isGroup || false,
+          profilePicThumb:
+            (contact?.profilePicThumb && contact?.profilePicThumb?.eurl) ||
+            null,
+          phoneNumber: contact?.userid || null,
         }
       },
 
-      newMessageListener: (fn) => window.Store.Msg.on('add', fn),
+      serializeMessage: (message) => ({
+        id: message.id._serialized,
+        body: message.body || null,
+        caption: message.caption || null,
+        type: message.type || null,
+        mimetype: message.mimetype || null,
+        isGroupMsg: message.isGroupMsg || false,
+        fromMe: message.id.fromMe,
+        author:
+          (message.author &&
+            window.WAPI.serializeContact(message.author._serialized)) ||
+          null,
+        from:
+          (message.from &&
+            window.WAPI.serializeContact(message.from._serialized)) ||
+          null,
+        to:
+          (message.to &&
+            window.WAPI.serializeContact(message.to._serialized)) ||
+          null,
+        unixTimestamp: message.t || null,
+      }),
     }
   }
 }

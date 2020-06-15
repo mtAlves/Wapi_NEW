@@ -3,7 +3,10 @@ const getStore = (modules) => {
   const neededObjects = [
     {
       id: 'Store',
-      conditions: (module) => (module.Chat && module.Msg ? module : null),
+      conditions: (module) =>
+        module.default && module.default.Chat && module.default.Msg
+          ? module.default
+          : null,
       foundedModule: null,
     },
     {
